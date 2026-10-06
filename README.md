@@ -171,6 +171,52 @@ spec:
           period: 15m
 ```
 
+### 🚦 Pre-Flight Blast Radius CI/CD Gate (GitHub Actions / ArgoCD)
+
+```yaml
+# .github/workflows/canary-blast-gate.yml
+name: Pre-Flight Blast Radius Canary Gate
+
+on:
+  deployment_status:
+
+jobs:
+  evaluate-blast-radius:
+    if: github.event.deployment_status.state == 'in_progress'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ingest Canary OTel Traces & Run Blast Simulation
+        run: |
+          python -m blast_radius.simulate \
+            --service "checkout-api" \
+            --canary-pct 0.01 \
+            --eval-window 15m \
+            --max-allowed-bri 12.5 \
+            --fail-closed
+      - name: Enforce Stop-Ship if Blast Radius Breaches Error Budget
+        if: failure()
+        run: |
+          curl -X POST https://argocd.internal/api/v1/rollbacks \
+            -H "Authorization: Bearer ${{ secrets.ARGOCD_TOKEN }}" \
+            -d '{"app": "checkout-api", "reason": "BRI breached Tier-0 error budget"}'
+```
+
+### 🔍 Differential Trace Delta Diagnostic Walkthrough
+
+```text
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 DIFFERENTIAL TRACE DELTA ANALYSIS (Llama 3 SRE Diagnosis)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Canary Window:      15m (1% Fleet Traffic | 1,420 RPS)
+• Golden Baseline:    p50: 42ms | p95: 110ms | p99: 185ms (0.01% err)
+• Canary Active:      p50: 48ms | p95: 340ms | p99: 1,890ms (1.84% err)
+• Root Span Delta:    checkout-service -> inventory-service -> postgres-pool
+• Lock Anomaly:       postgres-pool acquisition latency surged 14.8x.
+• Pre-Flight BRI:     BRI = 48.2 (Exceeds maximum safe threshold of 12.5).
+• Policy Action:      Deployment HALTED. Automated canary rollback dispatched.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
 ---
 
 ## 📂 Repository Topology
